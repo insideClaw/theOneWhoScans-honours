@@ -3,7 +3,6 @@ import subprocess
 import argparse
 import sqlite3
 import time
-import sys
 
 '''Be able to tell what people around you are staying put... and for how long. Runs nmap scans periodically, maps findings to names upon user
 interaction, notifies on topology change.'''
@@ -12,19 +11,21 @@ interaction, notifies on topology change.'''
 parser = argparse.ArgumentParser(description='Can be run without arguments.')
 
 class networkDetails:
-	network=""
-	gw=""
+    '''Initializing the object triggers pulling the network details data for use within scope of initialization'''
+    network=""
+    gw=""
 
-	# Obtains the network parameters on instantiation. Uses two calls for parsing the lists is too complicated.
-	def __init__(self):
-		netInfoNetwork = subprocess.Popen("ip route | head -2 | tail -1 | awk '{print $1}'", shell=True, stdout=subprocess.PIPE).stdout.read().strip()
-		if netInfoNetwork:
-			self.network = netInfoNetwork
-		else:
-			exit("-!- No connectivity, network scanning impossible!") 
-		# TODO: Make that proper verification and not just hitting the first viable line, and it seeming fine even with no net
+    # Obtains the network parameters on instantiation. Uses two calls for parsing the lists is too complicated.
+    def __init__(self):
+        pattern = '''ip route | grep -E "/[0-9]{2} dev $(ip route | grep default | tail -1 | awk '{print $5}')" | awk '{print $1}' '''
+        netInfoNetwork = subprocess.Popen(pattern, shell=True, stdout=subprocess.PIPE).stdout.read().strip()
+        if netInfoNetwork:
+            self.network = netInfoNetwork
+        else:
+            exit("-!- No connectivity, network scanning impossible!") 
 
 class topologyDB:
+    '''Responsible for providing a database connection and interface for the scope within which it's initialized'''
     conn = None
     c = None
 
@@ -38,56 +39,81 @@ class topologyDB:
     def __del__(self):
         self.conn.close()
 
+def netAddrClass(netAddr):
+    identifiers = netAddr.split(".")
+    if identifiers[0] == "10":
+        addrClass = "A"
+    elif identifiers[0] == "172" and int(identifiers[1]) in range(16,32):
+        addrClass = "B"
+    elif identifiers[0] == "192" and identifiers[1] == "168":
+        addrClass = "C"
+    else: 
+        addrClass = "Public"
+    return(addrClass)
+
+def safetyCheck(netDetails):
+    print("DEBUG:" + netAddrClass(netDetails.network))
+    if netAddrClass(netDetails.network) == "Public":
+        print("-!- Running on a non-private network! Exiting.")
+        exit(1)
+
 
 def scan(network):
-	'''Do a nmap scan. Returns a set of IP addresses and their corresponding MAC addresses found probing in string format. '''
-	sepCharacter='" => "' # Fixes quotation mark interpretation problems
-	captureComm = "sudo nmap -sn " + network + " | awk '/Nmap scan report for/{printf $5;}/MAC Address:/{print "+sepCharacter+"$3;}'"
-	scannedChunk = subprocess.Popen(captureComm, shell=True, stdout=subprocess.PIPE)
-	return scannedChunk.stdout.read()
+    '''Do an nmap scan. Returns a set of IP addresses and their corresponding MAC addresses found probing in string format. '''
+    sepCharacter='" => "' # Fixes quotation mark interpretation problems
+    captureComm = "sudo nmap -sn " + network + " | awk '/Nmap scan report for/{printf $5;}/MAC Address:/{print "+sepCharacter+"$3;}'"
+    scannedChunk = subprocess.Popen(captureComm, shell=True, stdout=subprocess.PIPE)
+    return scannedChunk.stdout.read()
 
 def analyzeMatch(captureChunk):
-	'''Given a chunk of capture and a file of previous captures, output conclusions.'''
-	# Parse the newly identified hosts. 
-	# Who are they? None of your business.
-	challengerHosts = captureChunk.split("\n")
-	challengerHosts = filter(None, challengerHosts)
+    '''Given a chunk of capture and a file of previous captures, output conclusions.'''
+    # Parse the newly identified hosts. 
+    # Who are they? None of your business.
+    challengerHosts = captureChunk.split("\n")
+    challengerHosts = filter(None, challengerHosts)
 
-	print("Loading Database...")
-	db = topologyDB()
+    print("Loading Database...")
+    db = topologyDB()
 
-	# Interpret current chunk
-	for c in challengerHosts:
-		challenger = c.split(' => ')
-		challenger = filter(None, challenger)
+    # Interpret current chunk
+    for c in challengerHosts:
+        challenger = c.split(' => ')
+        challenger = filter(None, challenger)
 
-		challengerIP = challenger[0]
-		try:
-			challengerMAC = challenger[1]
-		except:
-			challengerMAC = "It's me"
+        challengerIP = challenger[0]
+        try:
+            challengerMAC = challenger[1]
+        except:
+            challengerMAC = "It's me"
 
-		# Parse the familiar hosts
-		db.c.execute('SELECT mac, ip, alias, creationDate FROM topology WHERE mac=?', (challengerMAC,))
-		familiar = db.c.fetchone()
-		if familiar:
-			print("We know that one! Hello there [" + familiar[1] + "] Since: " + familiar[3] + " Known as: " + familiar[2] + " ["+familiar[0]+"]")
-		else:
-			alias = raw_input("\n-?- Provide alias for new entry with IP " + challengerIP + ":\n")
-			db.query('''INSERT INTO topology(mac,ip,alias,creationDate)
-						VALUES(?,?,?,?)''', (challengerMAC, challengerIP, alias, time.strftime("%c")))
-			print("-=- A new acquisition! Welcome to the party, " + alias + "!")
+        # Parse the familiar hosts
+        db.c.execute('SELECT mac, ip, alias, creationDate FROM topology WHERE mac=?', (challengerMAC,))
+        familiar = db.c.fetchone()
+        if familiar:
+            print("We know that one! Hello there [" + familiar[1] + "] Since: " + familiar[3] + " Known as: " + familiar[2] + " ["+familiar[0]+"]")
+        else:
+            alias = raw_input("\n-?- Provide alias for new entry with IP " + challengerIP + ":\n")
+            db.query('''INSERT INTO topology(mac,ip,alias,creationDate)
+                        VALUES(?,?,?,?)''', (challengerMAC, challengerIP, alias, time.strftime("%c")))
+            print("-=- A new acquisition! Welcome to the party, " + alias + "!")
 
-	print("-=- Closing database...")
-	db.conn.commit()
-	db.conn.close()
-	print("-=- Database closed.")
-				
-# Fills the netDetails object with info with a pull at initialize
-netDetails = networkDetails();
-while True:
-	print("-=- Sniffing new probes...")
-	newChunk = scan(netDetails.network)
-	print("-=- What do we know about this one...")
-	analyzeMatch(newChunk)
-	time.sleep(3)
+    print("-=- Closing database...")
+    db.conn.commit()
+    db.conn.close()
+    print("-=- Database closed.")
+            
+def main():
+    # Initializing the object triggers pulling the network details data
+    netDetails = networkDetails();
+
+    safetyCheck(netDetails);
+    # Program runs continuously and rescans periodically until cancelled
+    while True:
+        print("-=- Sniffing new probes...")
+        newChunk = scan(netDetails.network)
+        print("-=- What do we know about this one...")
+        analyzeMatch(newChunk)
+        time.sleep(3)
+
+if __name__ == '__main__':
+    main()
