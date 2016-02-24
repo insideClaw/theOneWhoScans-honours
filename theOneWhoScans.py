@@ -1,13 +1,11 @@
 #!/usr/bin/env python
 import subprocess
 import argparse
-import sqlite3
 import time
+import dbHandler
 
 '''Be able to tell what people around you are staying put... and for how long. Runs nmap scans periodically, maps findings to names upon user
 interaction, notifies on topology change.'''
-
-# Initial derived variables, global scope
 parser = argparse.ArgumentParser(description='Can be run without arguments.')
 
 class networkDetails:
@@ -23,21 +21,6 @@ class networkDetails:
             self.network = netInfoNetwork
         else:
             exit("-!- No connectivity, network scanning impossible!") 
-
-class topologyDB:
-    '''Responsible for providing a database connection and interface for the scope within which it's initialized'''
-    conn = None
-    c = None
-
-    def __init__(self):
-        self.conn = sqlite3.connect("topology.db")
-        self.c = self.conn.cursor()
-
-    def query(self, query, params):
-        return self.c.execute(query, params)
-
-    def __del__(self):
-        self.conn.close()
 
 def netAddrClass(netAddr):
     identifiers = netAddr.split(".")
@@ -59,11 +42,23 @@ def safetyCheck(netDetails):
 
 
 def scan(network):
-    '''Do an nmap scan. Returns a set of IP addresses and their corresponding MAC addresses found probing in string format. '''
+    '''Do an nmap scan. Returns a set of IP addresses and their corresponding MAC addresses found probing in string format,
+    followed by a default name provided by NetBIOS query.'''
     sepCharacter='" => "' # Fixes quotation mark interpretation problems
-    captureComm = "sudo nmap -sn " + network + " | awk '/Nmap scan report for/{printf $5;}/MAC Address:/{print "+sepCharacter+"$3;}'"
-    scannedChunk = subprocess.Popen(captureComm, shell=True, stdout=subprocess.PIPE)
-    return scannedChunk.stdout.read()
+    nmap_raw = "sudo nmap -sn " + network + " | awk '/Nmap scan report for/{printf $5;}/MAC Address:/{print "+sepCharacter+"$3;}'"
+    nmap = subprocess.Popen(nmap_raw, shell=True, stdout=subprocess.PIPE)
+    #netbiosComm = "nbtscan 
+    return nmap.stdout.read()
+
+def deepScan(ip):
+    '''Launch tools to give good idea of who the target is'''
+    print("-=- Running detailed analysis tools on the host... that might take a while.")
+    netbios_raw = "nbtscan " + ip
+    nmapAdv_raw = "sudo nmap -T4 -O -Pn " + ip
+    netbios = subprocess.Popen(nmapAdv_raw, shell=True, stdout=subprocess.PIPE)
+    nmapAdv = subprocess.Popen(netbios_raw, shell=True, stdout=subprocess.PIPE)
+    print(netbios.stdout.read())
+    print(nmapAdv.stdout.read())
 
 def analyzeMatch(captureChunk):
     '''Given a chunk of capture and a file of previous captures, output conclusions.'''
@@ -72,35 +67,35 @@ def analyzeMatch(captureChunk):
     challengerHosts = captureChunk.split("\n")
     challengerHosts = filter(None, challengerHosts)
 
-    print("Loading Database...")
-    db = topologyDB()
-
+    # Call the database connection handler, to use when checking and adding
+    dbconn = dbHandler.DatabaseConnection()
     # Interpret current chunk
     for c in challengerHosts:
         challenger = c.split(' => ')
+        # Splits up as per the structure given by the nmapComm awk parsing
         challenger = filter(None, challenger)
 
         challengerIP = challenger[0]
         try:
             challengerMAC = challenger[1]
         except:
-            challengerMAC = "It's me"
+            challengerMAC = "MyOwnMAC"
 
         # Parse the familiar hosts
-        db.c.execute('SELECT mac, ip, alias, creationDate FROM topology WHERE mac=?', (challengerMAC,))
-        familiar = db.c.fetchone()
+        familiar = dbconn.getEntriesFor(challengerMAC)
         if familiar:
             print("We know that one! Hello there [" + familiar[1] + "] Since: " + familiar[3] + " Known as: " + familiar[2] + " ["+familiar[0]+"]")
         else:
-            alias = raw_input("\n-?- Provide alias for new entry with IP " + challengerIP + ":\n")
-            db.query('''INSERT INTO topology(mac,ip,alias,creationDate)
-                        VALUES(?,?,?,?)''', (challengerMAC, challengerIP, alias, time.strftime("%c")))
-            print("-=- A new acquisition! Welcome to the party, " + alias + "!")
+            print("-=- Basic host info: ")
+            print("    IP [" + challengerIP + "] and MAC [" + challengerMAC + "]")
+            alias = raw_input("-?- Provide alias for new entry or type 'deep' for extensive scan.\n")
+            while (alias == "deep"):
+                deepScan(challengerIP)
+                alias = raw_input("-?- Provide alias for new entry or type 'deep' for extensive scan.\n")
 
-    print("-=- Closing database...")
-    db.conn.commit()
-    db.conn.close()
-    print("-=- Database closed.")
+            dbconn.addEntries(challengerMAC, challengerIP, alias)
+
+    dbconn.done()
             
 def main():
     # Initializing the object triggers pulling the network details data
@@ -113,7 +108,7 @@ def main():
         newChunk = scan(netDetails.network)
         print("-=- What do we know about this one...")
         analyzeMatch(newChunk)
-        time.sleep(3)
+
 
 if __name__ == '__main__':
     main()
