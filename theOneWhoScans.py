@@ -3,6 +3,7 @@ import subprocess
 import argparse
 import time
 import dbHandler
+import signal
 
 '''Be able to tell what people around you are staying put... and for how long. Runs nmap scans periodically, maps findings to names upon user
 interaction, notifies on topology change.'''
@@ -34,8 +35,12 @@ def netAddrClass(netAddr):
         addrClass = "Public"
     return(addrClass)
 
+def exitHandler(sig, frame):
+    print '-!- Exiting on user request (CTRL-C pressed)'
+    exit(0)
+
 def safetyCheck(netDetails):
-    print("DEBUG:" + netAddrClass(netDetails.network))
+    print("Class: " + netAddrClass(netDetails.network))
     if netAddrClass(netDetails.network) == "Public":
         print("-!- Running on a non-private network! Exiting.")
         exit(1)
@@ -66,6 +71,7 @@ def analyzeMatch(captureChunk):
     # Who are they? None of your business.
     challengerHosts = captureChunk.split("\n")
     challengerHosts = filter(None, challengerHosts)
+    print("DEBUG: " + str(challengerHosts))
 
     # Call the database connection handler, to use when checking and adding
     dbconn = dbHandler.DatabaseConnection()
@@ -85,12 +91,22 @@ def analyzeMatch(captureChunk):
         familiar = dbconn.getEntriesFor(challengerMAC)
         if familiar:
             print("We know that one! Hello there [" + familiar[1] + "] Since: " + familiar[3] + " Known as: " + familiar[2] + " ["+familiar[0]+"]")
-        else:
+        else: # TODO: Some revision in obvious duplication...
             print("-=- Basic host info: ")
             print("    IP [" + challengerIP + "] and MAC [" + challengerMAC + "]")
             alias = raw_input("-?- Provide alias for new entry or type 'deep' for extensive scan.\n")
             while (alias == "deep"):
+
+                #startTime = time.time()
+                # BEGIN BENCHMARK
+
                 deepScan(challengerIP)
+
+                # END BENCHMARK
+                #endTime = time.time()
+                #diff = endTime-startTime
+                #print("DEBUG: Benchmark time -> " + str(diff)[0:3])
+
                 alias = raw_input("-?- Provide alias for new entry or type 'deep' for extensive scan.\n")
 
             dbconn.addEntries(challengerMAC, challengerIP, alias)
@@ -98,6 +114,8 @@ def analyzeMatch(captureChunk):
     dbconn.done()
             
 def main():
+    # Start trapping CTRL-C immediately
+    signal.signal(signal.SIGINT, exitHandler)
     # Initializing the object triggers pulling the network details data
     netDetails = networkDetails();
 
@@ -106,6 +124,7 @@ def main():
     while True:
         print("-=- Sniffing new probes...")
         newChunk = scan(netDetails.network)
+
         print("-=- What do we know about this one...")
         analyzeMatch(newChunk)
 
