@@ -38,6 +38,7 @@ class DatabaseConnection:
         self.conn.close()
     
     def getEntriesFor(self, challengerMAC):
+       # TODO : use a dictionary
 	   self.c.execute('SELECT mac, ip, alias, creationDate FROM topology WHERE mac=?', (challengerMAC,))
 	   return self.c.fetchone()
 
