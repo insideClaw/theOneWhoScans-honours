@@ -23,7 +23,11 @@ class networkDetails:
         else:
             exit("-!- No connectivity, network scanning impossible!") 
 
-def netAddrClass(netAddr):
+def exitHandler(sig, frame):
+    print '-!- Exiting on user request (CTRL-C pressed)'
+    exit(0)
+
+def checkAddrClass(netAddr):
     identifiers = netAddr.split(".")
     if identifiers[0] == "10":
         addrClass = "A"
@@ -35,24 +39,19 @@ def netAddrClass(netAddr):
         addrClass = "Public"
     return(addrClass)
 
-def exitHandler(sig, frame):
-    print '-!- Exiting on user request (CTRL-C pressed)'
-    exit(0)
-
 def safetyCheck(netDetails):
-    print("Class: " + netAddrClass(netDetails.network))
-    if netAddrClass(netDetails.network) == "Public":
+    netAddrClass = checkAddrClass(netDetails.network)
+    print("Class: " + netAddrClass)
+    if netAddrClass == "Public":
         print("-!- Running on a non-private network! Exiting.")
         exit(1)
 
 
 def scan(network):
-    '''Do an nmap scan. Returns a set of IP addresses and their corresponding MAC addresses found probing in string format,
-    followed by a default name provided by NetBIOS query.'''
+    '''Do an nmap scan. Returns a set of IP addresses and their corresponding MAC addresses found probing in string format'''
     sepCharacter='" => "' # Fixes quotation mark interpretation problems
     nmap_raw = "sudo nmap -sn " + network + " | awk '/Nmap scan report for/{printf $5;}/MAC Address:/{print "+sepCharacter+"$3;}'"
     nmap = subprocess.Popen(nmap_raw, shell=True, stdout=subprocess.PIPE)
-    #netbiosComm = "nbtscan 
     return nmap.stdout.read()
 
 def deepScan(ip):
@@ -71,7 +70,7 @@ def analyzeMatch(captureChunk):
     # Who are they? None of your business.
     challengerHosts = captureChunk.split("\n")
     challengerHosts = filter(None, challengerHosts)
-    print("DEBUG: " + str(challengerHosts))
+    #print("DEBUG: " + str(challengerHosts))
 
     # Call the database connection handler, to use when checking and adding
     dbconn = dbHandler.DatabaseConnection()
@@ -88,6 +87,7 @@ def analyzeMatch(captureChunk):
             challengerMAC = "MyOwnMAC"
 
         # Parse the familiar hosts
+
         familiar = dbconn.getEntriesFor(challengerMAC)
         if familiar:
             print("We know that one! Hello there [" + familiar[1] + "] Since: " + familiar[3] + " Known as: " + familiar[2] + " ["+familiar[0]+"]")
@@ -96,17 +96,7 @@ def analyzeMatch(captureChunk):
             print("    IP [" + challengerIP + "] and MAC [" + challengerMAC + "]")
             alias = raw_input("-?- Provide alias for new entry or type 'deep' for extensive scan.\n")
             while (alias == "deep"):
-
-                #startTime = time.time()
-                # BEGIN BENCHMARK
-
                 deepScan(challengerIP)
-
-                # END BENCHMARK
-                #endTime = time.time()
-                #diff = endTime-startTime
-                #print("DEBUG: Benchmark time -> " + str(diff)[0:3])
-
                 alias = raw_input("-?- Provide alias for new entry or type 'deep' for extensive scan.\n")
 
             dbconn.addEntries(challengerMAC, challengerIP, alias)
