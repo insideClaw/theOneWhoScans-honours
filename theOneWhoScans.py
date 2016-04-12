@@ -91,7 +91,7 @@ def analyzeMatch(captureChunk):
         familiar = dbconn.getEntriesFor(challengerMAC)
         if familiar:
             print("We know that one! Hello there [" + familiar[1] + "] Since: " + familiar[3] + " Known as: " + familiar[2] + " ["+familiar[0]+"]")
-        else: # TODO: Some revision in obvious duplication...
+        else: 
             print("-=- Basic host info: ")
             print("    IP [" + challengerIP + "] and MAC [" + challengerMAC + "]")
             alias = raw_input("-?- Provide alias for new entry or type 'deep' for extensive scan.\n")
@@ -112,6 +112,7 @@ def main():
     safetyCheck(netDetails);
     # Program runs continuously and rescans periodically until cancelled
     while True:
+
         print("-=- Sniffing new probes...")
         newChunk = scan(netDetails.network)
 
